@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pianoforte Practice</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+    <script type="module">
+        // Loads real recorded grand-piano samples (the open-source "Salamander Grand Piano" set,
+        // via the smplr library). Exposed on window so the main (non-module) game script can
+        // call it lazily, on the same user gesture that creates the AudioContext. If the CDN or
+        // samples are unreachable, the promise resolves to null and the game falls back to its
+        // built-in synthesized tone — never a hard failure.
+        window.loadRealPiano = async function (audioContext) {
+            try {
+                const { SplendidGrandPiano } = await import("https://unpkg.com/smplr/dist/index.mjs");
+                const piano = SplendidGrandPiano(audioContext);
+                await piano.ready;
+                return piano;
+            } catch (e) {
+                return null;
+            }
+        };
+    </script>
+    <style>
+        body {
+            background-color: #f4efe6;
+            color: #2c2421;
+            font-family: 'Cormorant Garamond', Georgia, serif;
+        }
+        .regency-title {
+            font-family: 'Cinzel', serif;
+            letter-spacing: 1.5px;
+        }
+        .regency-box {
+            background-color: #fdfbf7;
+            border: 5px double #5c4033;
+            box-shadow: 6px 6px 0px rgba(92, 64, 51, 0.25);
+        }
+        .regency-button {
+            border: 1px solid #5c4033;
+            background-color: #f7f2ea;
+            transition: all 0.15s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .regency-button:hover {
+            background-color: #5c4033;
+            color: #fdfbf7;
+            border-color: #3b281f;
+        }
+        .piano-note-strip {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 6px;
+            max-width: 44rem;
+            margin: 0 auto;
+        }
+        .piano-strip-note {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border: 1px solid #5c4033;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #786154;
+            background-color: #f7f2ea;
+        }
+        .piano-strip-note.played {
+            background-color: #e5ddce;
+            color: #a89a86;
+            border-color: #cfc3ae;
+        }
+        .piano-strip-note.current {
+            background-color: #5c4033;
+            color: #fdfbf7;
+            border-color: #3b281f;
+            transform: scale(1.15);
+            box-shadow: 0 0 8px rgba(92,64,51,0.6);
+        }
+        .piano-keyboard {
+            display: flex;
+            justify-content: flex-start;
+            gap: 6px;
+            max-width: 46rem;
+            margin: 0 auto;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            padding: 4px 4px 8px 4px;
+        }
+        .piano-key {
+            flex: 0 0 auto;
+            width: 3.4rem;
+            height: 6.5rem;
+            background-color: #fdfbf7;
+            border: 1px solid #3b281f;
+            border-radius: 0 0 5px 5px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 4px;
+            padding-bottom: 10px;
+            font-weight: bold;
+            color: #3b281f;
+            cursor: pointer;
+            transition: background-color 0.08s ease, transform 0.08s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        @media (max-width: 480px) {
+            body { padding: 0.5rem !important; }
+            .regency-box { border-width: 3px !important; }
+            .piano-keyboard { gap: 2px; justify-content: center; }
+            .piano-key { width: 2.5rem; height: 5.5rem; gap: 2px; padding-bottom: 6px; }
+            .piano-key-note { font-size: 0.85rem; }
+            .piano-key-bind { font-size: 0.55rem; padding: 0 3px; }
+        }
+        .piano-key-note { font-size: 1rem; }
+        .piano-key-bind {
+            font-size: 0.65rem;
+            font-weight: normal;
+            color: #a89a86;
+            border: 1px solid #cfc3ae;
+            border-radius: 3px;
+            padding: 0 4px;
+        }
+        .piano-key.pressed .piano-key-bind,
+        .piano-key.hit .piano-key-bind,
+        .piano-key.missed .piano-key-bind {
+            color: #fdfbf7;
+            border-color: #fdfbf7;
+        }
+        .piano-key:hover { background-color: #f0e9dc; }
+        .piano-key.target {
+            background-color: #d9c9a3;
+            box-shadow: inset 0 0 0 3px #5c4033;
+        }
+        .piano-key.pressed {
+            background-color: #5c4033;
+            color: #fdfbf7;
+            transform: translateY(2px);
+        }
+        .piano-key.hit {
+            background-color: #4a6b3f;
+            color: #fdfbf7;
+            box-shadow: inset 0 0 0 3px #2f4527;
+        }
+        .piano-key.missed {
+            background-color: #8a3b3b;
+            color: #fdfbf7;
+            box-shadow: inset 0 0 0 3px #5c2323;
+        }
+        .piano-timer-track {
+            max-width: 44rem;
+            height: 10px;
+            margin: 0 auto;
+            border: 1px solid #5c4033;
+            border-radius: 5px;
+            background-color: #e5ddce;
+            overflow: hidden;
+        }
+        .piano-timer-fill {
+            height: 100%;
+            width: 100%;
+            background-color: #5c4033;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="regency-box p-8 md:p-10 space-y-6 text-center max-w-2xl w-full">
+        <h1 class="text-3xl font-bold regency-title text-[#3b281f]">Pianoforte Practice</h1>
+
+        <div id="piano-song-select" class="space-y-4">
+            <p class="text-sm md:text-base text-[#786154]">Choose a piece to play.</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button class="text-left p-4 regency-button" onclick="selectPianoSong('grimstock')">
+                    <span class="block font-bold uppercase text-xs tracking-wider mb-1.5">Grimstock</span>
+                    <span class="block text-sm leading-snug">A lively, well-known country-dance air.</span>
+                </button>
+                <button class="text-left p-4 regency-button" onclick="selectPianoSong('beveridge')">
+                    <span class="block font-bold uppercase text-xs tracking-wider mb-1.5">Mr. Beveridge's Maggot</span>
+                    <span class="block text-sm leading-snug">The tune every ballroom seems to know.</span>
+                </button>
+                <button class="text-left p-4 regency-button" onclick="selectPianoSong('shrewsbury')">
+                    <span class="block font-bold uppercase text-xs tracking-wider mb-1.5">Shrewsbury Lasses</span>
+                    <span class="block text-sm leading-snug">A brisk, bouncing reel.</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="piano-game" class="hidden space-y-5">
+            <div>
+                <h3 id="piano-title" class="text-xl font-bold regency-title text-[#3b281f]"></h3>
+                <p id="piano-subtitle" class="text-sm text-[#786154] italic"></p>
+            </div>
+            <p class="text-sm text-[#3b281f]">
+                This is your sheet music — the glowing key is the one to play next. Click it, or press the small letter shown on it on your own keyboard, before the bar below runs out.
+            </p>
+            <div id="piano-note-strip" class="piano-note-strip"></div>
+            <div id="piano-progress" class="text-xs uppercase tracking-widest text-[#786154] font-bold"></div>
+            <div class="piano-timer-track"><div id="piano-timer-fill" class="piano-timer-fill"></div></div>
+            <div id="piano-keyboard" class="piano-keyboard"></div>
+            <p id="piano-feedback" class="text-sm text-[#8a3b3b] italic h-5"></p>
+        </div>
+
+        <div id="piano-result" class="hidden space-y-4">
+            <p id="piano-result-text" class="text-base md:text-lg text-[#3b281f] leading-relaxed"></p>
+            <div class="max-w-md mx-auto">
+                <button class="w-full p-4 regency-button" onclick="resetToPianoSongSelect()">
+                    <span class="block font-bold uppercase text-xs tracking-wider">Play Again</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // Shared note data and audio
+        // ============================================================
+        const PIANO_NOTE_FREQUENCIES = {
+            'G3': 196.00, 'A3': 220.00, 'B3': 246.94,
+            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'Eb4': 311.13, 'E4': 329.63, 'F4': 349.23, 'F#4': 369.99,
+            'G4': 392.00, 'G#4': 415.30, 'A4': 440.00, 'Bb4': 466.16, 'B4': 493.88,
+            'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'Eb5': 622.25, 'E5': 659.25, 'F5': 698.46, 'F#5': 739.99,
+            'G5': 783.99, 'G#5': 830.61, 'A5': 880.00, 'Bb5': 932.33, 'B5': 987.77
+        };
+
+        // Every song only ever uses C4 through C5 — keeping the on-screen keyboard to just
+        // these 8 keys is what makes it fit a phone screen in portrait mode with large,
+        // thumb-friendly keys instead of forcing a horizontal scroll or tiny cramped buttons.
+        const PIANO_KEYBOARD_NOTES = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'];
+        const PIANO_KEY_BINDINGS = ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K'];
+        const PIANO_BASE_BEAT_MS = 500;
+
+        // Three public-domain English country dance tunes, hand-transcribed from the ABC
+        // notation on thesession.org (tunes 14292, 17725, 12290), transposed to fit entirely
+        // on the white-key C4-C5 octave above (Grimstock/G major -> C major; Beveridge/G minor
+        // -> A minor; Shrewsbury/D major -> C major). Each note is [pitch, beatUnits]; a bar's
+        // last note is held for 2 units, and the very last note of the piece is bumped to 3.
+        const SONG_PHRASES = {
+            grimstock: {
+                title: "Grimstock", subtitle: "A lively, well-known country-dance air",
+                partA: [
+                    ['C5', 1], ['B4', 1], ['C5', 1], ['G4', 2],
+                    ['A4', 1], ['B4', 1], ['C5', 1], ['B4', 1], ['G4', 2],
+                    ['E4', 1], ['F4', 1], ['G4', 1], ['A4', 1], ['G4', 2],
+                    ['F4', 1], ['G4', 1], ['E4', 1], ['F4', 1], ['E4', 2],
+                    ['C5', 1], ['B4', 1], ['C5', 1], ['G4', 2],
+                    ['A4', 1], ['B4', 1], ['C5', 1], ['B4', 1], ['G4', 2],
+                    ['E4', 1], ['F4', 1], ['G4', 1], ['A4', 1], ['G4', 2],
+                    ['F4', 1], ['E4', 1], ['D4', 1], ['C4', 2]
+                ],
+                partB: [
+                    ['C4', 1], ['C4', 1], ['D4', 1], ['E4', 1], ['C4', 1], ['D4', 2],
+                    ['E4', 1], ['C4', 1], ['D4', 1], ['E4', 1], ['C4', 1], ['D4', 2],
+                    ['C4', 1], ['C4', 1], ['D4', 1], ['E4', 1], ['C4', 1], ['D4', 2],
+                    ['E4', 1], ['C4', 1], ['D4', 1], ['C4', 2]
+                ]
+            },
+            beveridge: {
+                title: "Mr. Beveridge's Maggot", subtitle: "The tune every ballroom seems to know",
+                partA: [
+                    ['A4', 1], ['G4', 1], ['F4', 1], ['G4', 1], ['A4', 2],
+                    ['E4', 1], ['D4', 1], ['C4', 1], ['B4', 1], ['C4', 1], ['D4', 1], ['C4', 1], ['A4', 2],
+                    ['A4', 1], ['B4', 1], ['A4', 1], ['B4', 1], ['C5', 2],
+                    ['G4', 1], ['F4', 1], ['E4', 1], ['D4', 1], ['E4', 1], ['F4', 1], ['E4', 1], ['C4', 2]
+                ],
+                partB: [
+                    ['E4', 1], ['G4', 1], ['G4', 1], ['G4', 1], ['F4', 1], ['E4', 2],
+                    ['D4', 1], ['F4', 1], ['F4', 1], ['F4', 1], ['E4', 1], ['D4', 2],
+                    ['C4', 1], ['E4', 1], ['E4', 1], ['E4', 1], ['D4', 1], ['C4', 2],
+                    ['B4', 1], ['C4', 1], ['D4', 1], ['C4', 1], ['B4', 1], ['A4', 1], ['G4', 1], ['E4', 2],
+                    ['E4', 1], ['B4', 1], ['B4', 1], ['B4', 1], ['E4', 2],
+                    ['C5', 1], ['B4', 1], ['A4', 1], ['G4', 1], ['A4', 2],
+                    ['E4', 1], ['F4', 1], ['G4', 1], ['C4', 1], ['D4', 1], ['E4', 1], ['B4', 1], ['C4', 1], ['D4', 2],
+                    ['C4', 1], ['A4', 1], ['A4', 1], ['G4', 1], ['A4', 2]
+                ]
+            },
+            shrewsbury: {
+                title: "Shrewsbury Lasses", subtitle: "A brisk, bouncing reel",
+                partA: [
+                    ['G4', 1], ['A4', 1], ['B4', 1],
+                    ['C5', 1], ['G4', 1], ['F4', 2],
+                    ['E4', 1], ['C4', 1], ['E4', 2],
+                    ['D4', 1], ['F4', 1], ['E4', 1], ['D4', 2],
+                    ['E4', 1], ['C4', 1], ['E4', 1], ['G4', 2],
+                    ['C5', 1], ['E4', 1], ['C5', 2],
+                    ['B4', 1], ['D4', 1], ['G4', 2],
+                    ['A4', 1], ['C5', 1], ['A4', 1], ['F4', 2],
+                    ['G4', 2]
+                ],
+                partB: [
+                    ['G4', 1], ['A4', 1], ['B4', 1],
+                    ['C5', 1], ['A4', 1], ['F4', 2],
+                    ['F4', 1], ['D4', 1], ['G4', 2],
+                    ['G4', 1], ['E4', 1], ['C5', 2],
+                    ['C5', 1], ['A4', 1], ['A4', 2],
+                    ['A4', 1], ['F4', 1], ['D4', 2],
+                    ['D4', 1], ['B4', 1], ['G4', 2],
+                    ['F4', 1], ['A4', 1], ['F4', 2],
+                    ['E4', 1], ['F4', 1], ['G4', 1], ['E4', 1], ['C4', 2],
+                    ['F4', 1], ['A4', 1], ['F4', 2],
+                    ['E4', 1], ['G4', 1], ['C5', 1], ['E4', 2],
+                    ['E4', 1], ['D4', 1], ['C5', 1], ['B4', 2],
+                    ['C5', 2]
+                ]
+            }
+        };
+
+        function buildSongNotes(beatMs, ...parts) {
+            const notes = parts.flat().map(([note, units]) => ({ note, durationMs: units * beatMs }));
+            if (notes.length > 0) {
+                const last = notes[notes.length - 1];
+                last.durationMs = Math.max(last.durationMs, 3 * beatMs);
+            }
+            return notes;
+        }
+
+        const PIANO_SONGS = {};
+        Object.keys(SONG_PHRASES).forEach(key => {
+            const { title, subtitle, partA, partB } = SONG_PHRASES[key];
+            PIANO_SONGS[key] = { title, subtitle, notes: buildSongNotes(PIANO_BASE_BEAT_MS, partA, partB) };
+        });
+
+        let pianoAudioCtx = null;
+        let realPianoInstance = null;
+        let realPianoLoadStarted = false;
+
+        function ensureRealPianoLoading() {
+            try {
+                if (!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
+                if (realPianoLoadStarted || !window.loadRealPiano) return;
+                realPianoLoadStarted = true;
+                window.loadRealPiano(pianoAudioCtx).then(piano => { realPianoInstance = piano; });
+            } catch (e) { /* Web Audio unavailable — the game still plays, just without sound */ }
+        }
+
+        function playSynthPianoNote(note, durationMs) {
+            try {
+                const freq = PIANO_NOTE_FREQUENCIES[note];
+                if (!freq) return;
+                const ctx = pianoAudioCtx;
+                const ringSec = Math.max(0.18, durationMs / 1000 - 0.08);
+
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.28, ctx.currentTime + 0.015);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + ringSec);
+                osc.connect(gain).connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + ringSec + 0.05);
+
+                const overtone = ctx.createOscillator();
+                const overtoneGain = ctx.createGain();
+                overtone.type = 'sine';
+                overtone.frequency.value = freq * 2;
+                overtoneGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+                overtoneGain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.015);
+                overtoneGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + ringSec);
+                overtone.connect(overtoneGain).connect(ctx.destination);
+                overtone.start();
+                overtone.stop(ctx.currentTime + ringSec + 0.05);
+            } catch (e) { /* Web Audio unavailable — mini-game still works silently */ }
+        }
+
+        function playPianoNote(note, durationMs = 500) {
+            try {
+                if (!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
+                if (realPianoInstance) {
+                    realPianoInstance.start({ note: note, duration: Math.max(0.15, durationMs / 1000 - 0.03), velocity: 90 });
+                    return;
+                }
+                playSynthPianoNote(note, durationMs);
+            } catch (e) { /* Web Audio unavailable — mini-game still works silently */ }
+        }
+
+        function scheduleDriftCorrected(state, durationMs, callback) {
+            if (state.nextBeatTime === undefined) state.nextBeatTime = performance.now();
+            state.nextBeatTime += durationMs;
+            const delay = Math.max(0, state.nextBeatTime - performance.now());
+            state.timerId = setTimeout(callback, delay);
+        }
+
+        // ============================================================
+        // Game state and screens
+        // ============================================================
+        let pianoState = null;
+
+        document.addEventListener('keydown', function (e) {
+            const ps = pianoState;
+            if (!ps || !ps.songKey) return;
+            if (document.getElementById('piano-game').classList.contains('hidden')) return;
+            if (e.key.length !== 1) return;
+            const idx = PIANO_KEY_BINDINGS.indexOf(e.key.toUpperCase());
+            if (idx === -1) return;
+            e.preventDefault();
+            pressPianoKey(PIANO_KEYBOARD_NOTES[idx]);
+        });
+
+        function selectPianoSong(songKey) {
+            if (pianoState && pianoState.timerId) clearTimeout(pianoState.timerId);
+            ensureRealPianoLoading();
+
+            const song = PIANO_SONGS[songKey];
+            pianoState = { songKey: songKey, index: 0, mistakes: 0, hitRegistered: false, timerId: null };
+
+            document.getElementById("piano-song-select").classList.add("hidden");
+            document.getElementById("piano-result").classList.add("hidden");
+            document.getElementById("piano-feedback").innerText = "";
+            document.getElementById("piano-title").innerText = song.title;
+            document.getElementById("piano-subtitle").innerText = song.subtitle;
+
+            const keyboard = document.getElementById("piano-keyboard");
+            keyboard.innerHTML = "";
+            PIANO_KEYBOARD_NOTES.forEach((note, i) => {
+                const key = document.createElement("button");
+                key.className = "piano-key";
+                key.dataset.note = note;
+                key.innerHTML = `<span class="piano-key-note">${note.replace(/[0-9]/, '')}</span><span class="piano-key-bind">${PIANO_KEY_BINDINGS[i]}</span>`;
+                key.onclick = () => pressPianoKey(note);
+                keyboard.appendChild(key);
+            });
+
+            document.getElementById("piano-game").classList.remove("hidden");
+            playCurrentNoteWindow();
+        }
+
+        function renderPianoNoteStrip() {
+            const ps = pianoState;
+            const song = PIANO_SONGS[ps.songKey];
+            const strip = document.getElementById("piano-note-strip");
+            strip.innerHTML = "";
+            const windowStart = Math.max(0, ps.index - 2);
+            const windowEnd = Math.min(song.notes.length, ps.index + 6);
+            for (let i = windowStart; i < windowEnd; i++) {
+                const el = document.createElement("span");
+                el.className = "piano-strip-note" + (i === ps.index ? " current" : (i < ps.index ? " played" : ""));
+                el.innerText = song.notes[i].note.replace(/[0-9]/, '');
+                strip.appendChild(el);
+            }
+            document.getElementById("piano-progress").innerText = `Note ${Math.min(ps.index + 1, song.notes.length)} of ${song.notes.length}`;
+        }
+
+        function startPianoTimerBar(durationMs) {
+            const fill = document.getElementById("piano-timer-fill");
+            fill.style.transition = "none";
+            fill.style.width = "100%";
+            void fill.offsetWidth;
+            fill.style.transition = `width ${durationMs}ms linear`;
+            fill.style.width = "0%";
+        }
+
+        function playCurrentNoteWindow() {
+            const ps = pianoState;
+            const song = PIANO_SONGS[ps.songKey];
+            if (ps.index >= song.notes.length) {
+                finishPianoSong();
+                return;
+            }
+
+            const noteObj = song.notes[ps.index];
+            ps.hitRegistered = false;
+            document.getElementById("piano-feedback").innerText = "";
+            renderPianoNoteStrip();
+            startPianoTimerBar(noteObj.durationMs);
+
+            document.querySelectorAll(".piano-key").forEach(k => k.classList.remove("target"));
+            const targetKey = document.querySelector(`.piano-key[data-note="${noteObj.note}"]`);
+            if (targetKey) targetKey.classList.add("target");
+
+            scheduleDriftCorrected(ps, noteObj.durationMs, () => {
+                if (!ps.hitRegistered) {
+                    ps.mistakes++;
+                    flashKeyResult(noteObj.note, false);
+                    document.getElementById("piano-feedback").innerText = "Missed it!";
+                }
+                ps.index++;
+                playCurrentNoteWindow();
+            });
+        }
+
+        function flashKeyResult(note, wasHit) {
+            const btn = document.querySelector(`.piano-key[data-note="${note}"]`);
+            if (!btn) return;
+            btn.classList.add(wasHit ? "hit" : "missed");
+            setTimeout(() => btn.classList.remove("hit", "missed"), 250);
+        }
+
+        function pressPianoKey(note) {
+            const ps = pianoState;
+            if (!ps || !ps.songKey) return;
+            const song = PIANO_SONGS[ps.songKey];
+            if (ps.index >= song.notes.length) return;
+            const noteObj = song.notes[ps.index];
+
+            const btn = document.querySelector(`.piano-key[data-note="${note}"]`);
+            if (btn) {
+                btn.classList.add("pressed");
+                setTimeout(() => btn.classList.remove("pressed"), 120);
+            }
+
+            if (ps.hitRegistered) {
+                playPianoNote(note, 300);
+                return;
+            }
+
+            if (note === noteObj.note) {
+                ps.hitRegistered = true;
+                playPianoNote(note, noteObj.durationMs);
+                flashKeyResult(note, true);
+                document.getElementById("piano-feedback").innerText = "";
+            } else {
+                playPianoNote(note, 300);
+                document.getElementById("piano-feedback").innerText = "Not quite — try the glowing key.";
+            }
+        }
+
+        function finishPianoSong() {
+            const ps = pianoState;
+            const song = PIANO_SONGS[ps.songKey];
+
+            let message;
+            if (ps.mistakes === 0) {
+                message = `Note-perfect! You played "${song.title}" through without a single mistake.`;
+            } else if (ps.mistakes <= 4) {
+                message = `You carried "${song.title}" through with only a few small stumbles — well played.`;
+            } else {
+                message = `"${song.title}" came apart a little under your fingers this time — have another go.`;
+            }
+
+            document.getElementById("piano-game").classList.add("hidden");
+            document.getElementById("piano-result-text").innerText = `${message} (${ps.mistakes} mistake${ps.mistakes === 1 ? '' : 's'} out of ${song.notes.length} notes.)`;
+            document.getElementById("piano-result").classList.remove("hidden");
+        }
+
+        function resetToPianoSongSelect() {
+            if (pianoState && pianoState.timerId) clearTimeout(pianoState.timerId);
+            document.getElementById("piano-result").classList.add("hidden");
+            document.getElementById("piano-game").classList.add("hidden");
+            document.getElementById("piano-song-select").classList.remove("hidden");
+        }
+    </script>
+</body>
+</html>

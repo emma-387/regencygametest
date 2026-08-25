@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Country Dance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+    <script type="module">
+        // Loads real recorded grand-piano samples (the open-source "Salamander Grand Piano" set,
+        // via the smplr library) for the orchestra's tune. Exposed on window so the main
+        // (non-module) game script can call it lazily, on the same user gesture that creates the
+        // AudioContext. If the CDN or samples are unreachable, the promise resolves to null and
+        // the game falls back to its built-in synthesized tone — never a hard failure.
+        window.loadRealPiano = async function (audioContext) {
+            try {
+                const { SplendidGrandPiano } = await import("https://unpkg.com/smplr/dist/index.mjs");
+                const piano = SplendidGrandPiano(audioContext);
+                await piano.ready;
+                return piano;
+            } catch (e) {
+                return null;
+            }
+        };
+    </script>
+    <style>
+        body {
+            background-color: #f4efe6;
+            color: #2c2421;
+            font-family: 'Cormorant Garamond', Georgia, serif;
+        }
+        .regency-title {
+            font-family: 'Cinzel', serif;
+            letter-spacing: 1.5px;
+        }
+        .regency-box {
+            background-color: #fdfbf7;
+            border: 5px double #5c4033;
+            box-shadow: 6px 6px 0px rgba(92, 64, 51, 0.25);
+        }
+        .regency-button {
+            border: 1px solid #5c4033;
+            background-color: #f7f2ea;
+            transition: all 0.15s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .regency-button:hover {
+            background-color: #5c4033;
+            color: #fdfbf7;
+            border-color: #3b281f;
+        }
+        .piano-note-strip {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 6px;
+            max-width: 44rem;
+            margin: 0 auto;
+        }
+        .piano-strip-note {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2rem;
+            height: 2rem;
+            border: 1px solid #5c4033;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.9rem;
+            color: #786154;
+            background-color: #f7f2ea;
+        }
+        .piano-strip-note.played {
+            background-color: #e5ddce;
+            color: #a89a86;
+            border-color: #cfc3ae;
+        }
+        .piano-strip-note.current {
+            background-color: #5c4033;
+            color: #fdfbf7;
+            border-color: #3b281f;
+            transform: scale(1.15);
+            box-shadow: 0 0 8px rgba(92,64,51,0.6);
+        }
+        .piano-timer-track {
+            max-width: 44rem;
+            height: 10px;
+            margin: 0 auto;
+            border: 1px solid #5c4033;
+            border-radius: 5px;
+            background-color: #e5ddce;
+            overflow: hidden;
+        }
+        .piano-timer-fill {
+            height: 100%;
+            width: 100%;
+            background-color: #5c4033;
+        }
+        .dance-arrows {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            max-width: 30rem;
+            margin: 0 auto;
+            flex-wrap: nowrap;
+        }
+        .dance-key {
+            flex: 1 1 0;
+            max-width: 5.5rem;
+            height: 5.5rem;
+            background-color: #fdfbf7;
+            border: 1px solid #3b281f;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            font-weight: bold;
+            color: #3b281f;
+            cursor: pointer;
+            transition: background-color 0.08s ease, transform 0.08s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        .dance-key-glyph {
+            font-size: 1.9rem;
+            line-height: 1;
+        }
+        .dance-key-bind {
+            font-size: 0.6rem;
+            font-weight: normal;
+            color: #a89a86;
+            border: 1px solid #cfc3ae;
+            border-radius: 3px;
+            padding: 0 4px;
+        }
+        .dance-key.pressed .dance-key-bind,
+        .dance-key.hit .dance-key-bind,
+        .dance-key.missed .dance-key-bind {
+            color: #fdfbf7;
+            border-color: #fdfbf7;
+        }
+        .dance-key:hover {
+            background-color: #f0e9dc;
+        }
+        .dance-key.target {
+            background-color: #d9c9a3;
+            box-shadow: inset 0 0 0 3px #5c4033;
+        }
+        .dance-key.pressed {
+            background-color: #5c4033;
+            color: #fdfbf7;
+            transform: translateY(2px);
+        }
+        .dance-key.hit {
+            background-color: #4a6b3f;
+            color: #fdfbf7;
+            box-shadow: inset 0 0 0 3px #2f4527;
+        }
+        .dance-key.missed {
+            background-color: #8a3b3b;
+            color: #fdfbf7;
+            box-shadow: inset 0 0 0 3px #5c2323;
+        }
+        @media (max-width: 480px) {
+            body { padding: 0.5rem !important; }
+            .regency-box { border-width: 3px !important; }
+            .dance-key { height: 4.4rem; max-width: none; }
+            .dance-key-glyph { font-size: 1.5rem; }
+            .dance-key-bind { font-size: 0.5rem; }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="regency-box p-8 md:p-10 space-y-6 text-center max-w-2xl w-full">
+        <h1 class="text-3xl font-bold regency-title text-[#3b281f]">Country Dance</h1>
+
+        <div id="song-select" class="space-y-4">
+            <p class="text-sm md:text-base text-[#786154]">Choose a tune, then take the floor.</p>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <button class="text-left p-4 regency-button" onclick="selectSong('grimstock')">
+                    <span class="block font-bold uppercase text-xs tracking-wider mb-1.5">Grimstock</span>
+                    <span class="block text-sm leading-snug">A lively, well-known country-dance air.</span>
+                </button>
+                <button class="text-left p-4 regency-button" onclick="selectSong('beveridge')">
+                    <span class="block font-bold uppercase text-xs tracking-wider mb-1.5">Mr. Beveridge's Maggot</span>
+                    <span class="block text-sm leading-snug">The tune every ballroom seems to know.</span>
+                </button>
+                <button class="text-left p-4 regency-button" onclick="selectSong('shrewsbury')">
+                    <span class="block font-bold uppercase text-xs tracking-wider mb-1.5">Shrewsbury Lasses</span>
+                    <span class="block text-sm leading-snug">A brisk, bouncing reel.</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="ball-intro" class="hidden space-y-4">
+            <p id="ball-intro-text" class="text-base md:text-lg text-[#3b281f] leading-relaxed"></p>
+            <div class="max-w-md mx-auto">
+                <button class="w-full p-4 regency-button" onclick="startBallDance()">
+                    <span class="block font-bold uppercase text-xs tracking-wider">Take the Floor</span>
+                </button>
+            </div>
+        </div>
+
+        <div id="ball-game" class="hidden space-y-5">
+            <div>
+                <h3 id="ball-song-title" class="text-xl font-bold regency-title text-[#3b281f]"></h3>
+                <p class="text-sm text-[#786154] italic">Follow the steps as they come.</p>
+            </div>
+            <p class="text-sm text-[#3b281f]">
+                The glowing arrow is the step to take next — click it, tap it, or press the matching arrow key, in time with the bar below.
+            </p>
+            <div id="dance-step-strip" class="piano-note-strip"></div>
+            <div id="dance-progress" class="text-xs uppercase tracking-widest text-[#786154] font-bold"></div>
+            <div class="piano-timer-track"><div id="dance-timer-fill" class="piano-timer-fill"></div></div>
+            <div id="dance-arrows" class="dance-arrows"></div>
+            <p id="dance-feedback" class="text-sm text-[#786154] italic h-5"></p>
+        </div>
+
+        <div id="ball-result" class="hidden space-y-4">
+            <p id="ball-result-text" class="text-base md:text-lg text-[#3b281f] leading-relaxed"></p>
+            <div class="max-w-md mx-auto">
+                <button class="w-full p-4 regency-button" onclick="resetToSongSelect()">
+                    <span class="block font-bold uppercase text-xs tracking-wider">Play Again</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // Shared note data and audio (identical mechanics to the source game's ball scene).
+        // ============================================================
+        const PIANO_NOTE_FREQUENCIES = {
+            'G3': 196.00, 'A3': 220.00, 'B3': 246.94,
+            'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'Eb4': 311.13, 'E4': 329.63, 'F4': 349.23, 'F#4': 369.99,
+            'G4': 392.00, 'G#4': 415.30, 'A4': 440.00, 'Bb4': 466.16, 'B4': 493.88,
+            'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'Eb5': 622.25, 'E5': 659.25, 'F5': 698.46, 'F#5': 739.99,
+            'G5': 783.99, 'G#5': 830.61, 'A5': 880.00, 'Bb5': 932.33, 'B5': 987.77
+        };
+
+        // Real key, real register, real rhythm — three public-domain English country dance
+        // tunes, hand-transcribed from the ABC notation on thesession.org (tunes 14292, 17725,
+        // 12290). Each note is [pitch, beatUnits] in sixteenth-note-equivalent units.
+        const SONG_PHRASES = {
+            grimstock: {
+                title: "Grimstock", subtitle: "A lively, well-known country-dance air",
+                ballPartA: [
+                    ['G5', 4], ['F#5', 2], ['G5', 4], ['D5', 2],
+                    ['E5', 3], ['F#5', 1], ['G5', 2], ['F#5', 4], ['D5', 2],
+                    ['B4', 3], ['C5', 1], ['D5', 2], ['E5', 4], ['D5', 2],
+                    ['C5', 2], ['D5', 2], ['B4', 2], ['C5', 4], ['B4', 2],
+                    ['G5', 4], ['F#5', 2], ['G5', 4], ['D5', 2],
+                    ['E5', 3], ['F#5', 1], ['G5', 2], ['F#5', 4], ['D5', 2],
+                    ['B4', 3], ['C5', 1], ['D5', 2], ['E5', 4], ['D5', 2],
+                    ['C5', 3], ['B4', 1], ['A4', 2], ['G4', 6]
+                ],
+                ballPartB: [
+                    ['G4', 2], ['G4', 2], ['A4', 2], ['B4', 2], ['G4', 2], ['A4', 2],
+                    ['B4', 2], ['G4', 2], ['A4', 2], ['B4', 2], ['G4', 2], ['A4', 2],
+                    ['G4', 2], ['G4', 2], ['A4', 2], ['B4', 2], ['G4', 2], ['A4', 2],
+                    ['B4', 2], ['G4', 2], ['A4', 2], ['G4', 6]
+                ]
+            },
+            beveridge: {
+                title: "Mr. Beveridge's Maggot", subtitle: "The tune every ballroom seems to know",
+                ballPartA: [
+                    ['G5', 8], ['F#5', 4], ['E5', 2], ['F#5', 2], ['G5', 8],
+                    ['D5', 4], ['C5', 2], ['Bb4', 2], ['A4', 2], ['Bb4', 2], ['C5', 4], ['Bb4', 4], ['G4', 4],
+                    ['G5', 8], ['A5', 4], ['G5', 2], ['A5', 2], ['Bb5', 8],
+                    ['F4', 4], ['Eb4', 2], ['D4', 2], ['C4', 2], ['D4', 2], ['Eb4', 4], ['D4', 4], ['Bb4', 4]
+                ],
+                ballPartB: [
+                    ['D5', 4], ['F5', 8], ['F5', 4], ['F5', 4], ['Eb5', 2], ['D5', 2],
+                    ['C5', 4], ['Eb5', 8], ['Eb5', 4], ['Eb5', 4], ['D5', 2], ['C5', 2],
+                    ['Bb4', 4], ['D5', 8], ['D5', 4], ['D5', 4], ['C5', 2], ['Bb4', 2],
+                    ['A4', 2], ['Bb4', 2], ['C5', 4], ['Bb4', 4], ['A4', 2], ['G4', 2], ['F#4', 4], ['D4', 4],
+                    ['D5', 4], ['A5', 8], ['A5', 4], ['A5', 4], ['D5', 4],
+                    ['Bb5', 4], ['A5', 4], ['G5', 4], ['F#5', 4], ['G5', 8],
+                    ['D5', 2], ['Eb5', 2], ['F5', 4], ['Bb4', 2], ['C5', 2], ['D5', 4], ['A4', 2], ['Bb4', 2], ['C5', 4],
+                    ['Bb4', 4], ['G4', 4], ['G4', 4], ['F#4', 4], ['G4', 8]
+                ]
+            },
+            shrewsbury: {
+                title: "Shrewsbury Lasses", subtitle: "A brisk, bouncing reel",
+                ballPartA: [
+                    ['A4', 1], ['B4', 1], ['C#5', 2],
+                    ['D5', 4], ['A4', 8], ['G4', 4],
+                    ['F#4', 4], ['D4', 8], ['F#4', 4],
+                    ['E4', 4], ['G4', 4], ['F#4', 4], ['E4', 4],
+                    ['F#4', 4], ['D4', 4], ['F#4', 4], ['A4', 4],
+                    ['D5', 4], ['F#5', 8], ['D5', 4],
+                    ['C#5', 4], ['E5', 8], ['A4', 4],
+                    ['B4', 4], ['D5', 4], ['B4', 4], ['G#4', 4],
+                    ['A4', 12]
+                ],
+                ballPartB: [
+                    ['A4', 1], ['B4', 1], ['C#5', 2],
+                    ['D5', 4], ['B4', 8], ['G4', 4],
+                    ['G4', 4], ['E4', 8], ['A5', 4],
+                    ['A5', 4], ['F#5', 8], ['D5', 4],
+                    ['D5', 4], ['B4', 8], ['B5', 4],
+                    ['B5', 4], ['G5', 8], ['E5', 4],
+                    ['E5', 4], ['C#5', 8], ['A4', 4],
+                    ['G4', 4], ['B4', 8], ['G4', 4],
+                    ['F#4', 3], ['G4', 3], ['A4', 2], ['F#4', 4], ['D4', 4],
+                    ['G4', 4], ['B4', 8], ['G4', 4],
+                    ['F#4', 4], ['A4', 4], ['D5', 4], ['F#5', 4],
+                    ['F#5', 4], ['E5', 4], ['D5', 4], ['C#5', 4],
+                    ['D5', 12]
+                ]
+            }
+        };
+
+        function buildSongNotes(beatMs, ...parts) {
+            const notes = parts.flat().map(([note, units]) => ({ note, durationMs: units * beatMs }));
+            if (notes.length > 0) {
+                const last = notes[notes.length - 1];
+                last.durationMs = Math.max(last.durationMs, 3 * beatMs);
+            }
+            return notes;
+        }
+
+        const BALL_BASE_UNIT_MS = 125;
+        const BALL_DANCE_STEP_INTERVAL = 7; // one dance prompt roughly every 1.75 seconds
+
+        const BALL_SONGS = {};
+        Object.keys(SONG_PHRASES).forEach(key => {
+            const { title, subtitle, ballPartA, ballPartB } = SONG_PHRASES[key];
+            BALL_SONGS[key] = { title, subtitle, notes: buildSongNotes(BALL_BASE_UNIT_MS, ballPartA, ballPartB) };
+        });
+
+        const DANCE_DIRECTIONS = ['left', 'down', 'up', 'right'];
+        const DANCE_KEY_BINDINGS = { left: 'ArrowLeft', down: 'ArrowDown', up: 'ArrowUp', right: 'ArrowRight' };
+        const DANCE_GLYPHS = { left: '←', down: '↓', up: '↑', right: '→' };
+        const DANCE_BASE_FIGURE = ['left', 'right', 'up', 'down', 'left', 'right', 'up', 'down', 'right', 'left', 'down', 'up', 'right', 'left', 'down', 'up'];
+
+        function buildDancePattern(stepCount) {
+            const pattern = [];
+            while (pattern.length < stepCount) pattern.push(...DANCE_BASE_FIGURE);
+            return pattern.slice(0, stepCount);
+        }
+
+        function sumNextDurations(notes, startIndex, count) {
+            let total = 0;
+            for (let i = startIndex; i < Math.min(startIndex + count, notes.length); i++) total += notes[i].durationMs;
+            return total;
+        }
+
+        let pianoAudioCtx = null;
+        let realPianoInstance = null;
+        let realPianoLoadStarted = false;
+
+        function ensureRealPianoLoading() {
+            try {
+                if (!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
+                if (realPianoLoadStarted || !window.loadRealPiano) return;
+                realPianoLoadStarted = true;
+                window.loadRealPiano(pianoAudioCtx).then(piano => { realPianoInstance = piano; });
+            } catch (e) { /* Web Audio unavailable — the game still plays, just without sound */ }
+        }
+
+        function playSynthPianoNote(note, durationMs) {
+            try {
+                const freq = PIANO_NOTE_FREQUENCIES[note];
+                if (!freq) return;
+                const ctx = pianoAudioCtx;
+                const ringSec = Math.max(0.18, durationMs / 1000 - 0.08);
+
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.value = freq;
+                gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.28, ctx.currentTime + 0.015);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + ringSec);
+                osc.connect(gain).connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + ringSec + 0.05);
+
+                const overtone = ctx.createOscillator();
+                const overtoneGain = ctx.createGain();
+                overtone.type = 'sine';
+                overtone.frequency.value = freq * 2;
+                overtoneGain.gain.setValueAtTime(0.0001, ctx.currentTime);
+                overtoneGain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.015);
+                overtoneGain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + ringSec);
+                overtone.connect(overtoneGain).connect(ctx.destination);
+                overtone.start();
+                overtone.stop(ctx.currentTime + ringSec + 0.05);
+            } catch (e) { /* Web Audio unavailable — mini-game still works silently */ }
+        }
+
+        function playPianoNote(note, durationMs = 500) {
+            try {
+                if (!pianoAudioCtx) pianoAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (pianoAudioCtx.state === 'suspended') pianoAudioCtx.resume();
+                if (realPianoInstance) {
+                    realPianoInstance.start({ note: note, duration: Math.max(0.15, durationMs / 1000 - 0.03), velocity: 90 });
+                    return;
+                }
+                playSynthPianoNote(note, durationMs);
+            } catch (e) { /* Web Audio unavailable — mini-game still works silently */ }
+        }
+
+        function scheduleDriftCorrected(state, durationMs, callback) {
+            if (state.nextBeatTime === undefined) state.nextBeatTime = performance.now();
+            state.nextBeatTime += durationMs;
+            const delay = Math.max(0, state.nextBeatTime - performance.now());
+            state.timerId = setTimeout(callback, delay);
+        }
+
+        // ============================================================
+        // Game state and screens
+        // ============================================================
+        let danceState = null;
+
+        function selectSong(songKey) {
+            if (danceState && danceState.timerId) clearTimeout(danceState.timerId);
+            ensureRealPianoLoading();
+
+            const song = BALL_SONGS[songKey];
+            const stepCount = Math.ceil(song.notes.length / BALL_DANCE_STEP_INTERVAL);
+            danceState = { songKey, pattern: buildDancePattern(stepCount), noteIndex: 0, stepIndex: -1, hits: 0, hitRegistered: false, awaitingInput: false, timerId: null };
+
+            document.getElementById("ball-intro-text").innerText = `The musicians strike up "${song.title}." Take the floor when you're ready.`;
+            document.getElementById("song-select").classList.add("hidden");
+            document.getElementById("ball-result").classList.add("hidden");
+            document.getElementById("ball-game").classList.add("hidden");
+            document.getElementById("dance-feedback").innerText = "";
+            document.getElementById("ball-intro").classList.remove("hidden");
+        }
+
+        function startBallDance() {
+            const song = BALL_SONGS[danceState.songKey];
+            document.getElementById("ball-intro").classList.add("hidden");
+            document.getElementById("ball-song-title").innerText = song.title;
+
+            const arrowsEl = document.getElementById("dance-arrows");
+            arrowsEl.innerHTML = "";
+            DANCE_DIRECTIONS.forEach(dir => {
+                const key = document.createElement("button");
+                key.className = "dance-key";
+                key.dataset.dir = dir;
+                key.innerHTML = `<span class="dance-key-glyph">${DANCE_GLYPHS[dir]}</span><span class="dance-key-bind">${dir.toUpperCase()}</span>`;
+                key.onclick = () => pressDanceArrow(dir);
+                arrowsEl.appendChild(key);
+            });
+
+            document.getElementById("ball-game").classList.remove("hidden");
+            playDanceBeat();
+        }
+
+        document.addEventListener('keydown', function (e) {
+            const ds = danceState;
+            if (!ds) return;
+            const ballGame = document.getElementById('ball-game');
+            if (!ballGame || ballGame.classList.contains('hidden')) return;
+            const dir = Object.keys(DANCE_KEY_BINDINGS).find(d => DANCE_KEY_BINDINGS[d] === e.key);
+            if (!dir) return;
+            e.preventDefault();
+            pressDanceArrow(dir);
+        });
+
+        function renderDanceStepStrip() {
+            const ds = danceState;
+            const strip = document.getElementById("dance-step-strip");
+            strip.innerHTML = "";
+            const windowStart = Math.max(0, ds.stepIndex - 2);
+            const windowEnd = Math.min(ds.pattern.length, ds.stepIndex + 6);
+            for (let i = windowStart; i < windowEnd; i++) {
+                const el = document.createElement("span");
+                el.className = "piano-strip-note" + (i === ds.stepIndex ? " current" : (i < ds.stepIndex ? " played" : ""));
+                el.innerText = DANCE_GLYPHS[ds.pattern[i]];
+                strip.appendChild(el);
+            }
+            document.getElementById("dance-progress").innerText = `Step ${Math.min(ds.stepIndex + 1, ds.pattern.length)} of ${ds.pattern.length}`;
+        }
+
+        function startDanceTimerBar(durationMs) {
+            const fill = document.getElementById("dance-timer-fill");
+            fill.style.transition = "none";
+            fill.style.width = "100%";
+            void fill.offsetWidth;
+            fill.style.transition = `width ${durationMs}ms linear`;
+            fill.style.width = "0%";
+        }
+
+        function playDanceBeat() {
+            const ds = danceState;
+            const song = BALL_SONGS[ds.songKey];
+
+            if (ds.noteIndex >= song.notes.length) {
+                if (ds.awaitingInput && !ds.hitRegistered) flashDanceKeyResult(ds.pattern[ds.stepIndex], false);
+                finishBallDance();
+                return;
+            }
+
+            if (ds.noteIndex % BALL_DANCE_STEP_INTERVAL === 0) {
+                if (ds.awaitingInput && !ds.hitRegistered) flashDanceKeyResult(ds.pattern[ds.stepIndex], false);
+                ds.stepIndex++;
+                ds.hitRegistered = false;
+                ds.awaitingInput = true;
+                document.getElementById("dance-feedback").innerText = "";
+                renderDanceStepStrip();
+                startDanceTimerBar(sumNextDurations(song.notes, ds.noteIndex, BALL_DANCE_STEP_INTERVAL));
+
+                document.querySelectorAll(".dance-key").forEach(k => k.classList.remove("target"));
+                const targetKey = document.querySelector(`.dance-key[data-dir="${ds.pattern[ds.stepIndex]}"]`);
+                if (targetKey) targetKey.classList.add("target");
+            }
+
+            const noteObj = song.notes[ds.noteIndex];
+            playPianoNote(noteObj.note, noteObj.durationMs);
+
+            scheduleDriftCorrected(ds, noteObj.durationMs, () => {
+                ds.noteIndex++;
+                playDanceBeat();
+            });
+        }
+
+        function flashDanceKeyResult(dir, wasHit) {
+            const btn = document.querySelector(`.dance-key[data-dir="${dir}"]`);
+            if (!btn) return;
+            btn.classList.add(wasHit ? "hit" : "missed");
+            setTimeout(() => btn.classList.remove("hit", "missed"), 250);
+        }
+
+        function pressDanceArrow(dir) {
+            const ds = danceState;
+            if (!ds || !ds.awaitingInput) return;
+
+            const btn = document.querySelector(`.dance-key[data-dir="${dir}"]`);
+            if (btn) {
+                btn.classList.add("pressed");
+                setTimeout(() => btn.classList.remove("pressed"), 120);
+            }
+
+            if (ds.hitRegistered) return;
+
+            if (dir === ds.pattern[ds.stepIndex]) {
+                ds.hitRegistered = true;
+                ds.hits++;
+                flashDanceKeyResult(dir, true);
+                document.getElementById("dance-feedback").innerText = "";
+            } else {
+                document.getElementById("dance-feedback").innerText = "Try to catch the next step!";
+            }
+        }
+
+        function finishBallDance() {
+            const ds = danceState;
+            const song = BALL_SONGS[ds.songKey];
+            const hitRatio = ds.hits / ds.pattern.length;
+
+            let message;
+            if (hitRatio >= 0.95) {
+                message = `Flawless! You moved through every figure of "${song.title}" in perfect step.`;
+            } else if (hitRatio >= 0.65) {
+                message = `Well danced — you kept pace through most of "${song.title}," missing only the odd step.`;
+            } else if (hitRatio >= 0.3) {
+                message = `You lost the thread of the figure now and then, but got through "${song.title}" all the same.`;
+            } else {
+                message = `The steps mostly eluded you this time — have another go whenever you like.`;
+            }
+
+            document.getElementById("ball-game").classList.add("hidden");
+            document.getElementById("ball-result-text").innerText = `${message} (${ds.hits} of ${ds.pattern.length} steps hit — ${Math.round(hitRatio * 100)}%)`;
+            document.getElementById("ball-result").classList.remove("hidden");
+        }
+
+        function resetToSongSelect() {
+            if (danceState && danceState.timerId) clearTimeout(danceState.timerId);
+            document.getElementById("ball-result").classList.add("hidden");
+            document.getElementById("ball-intro").classList.add("hidden");
+            document.getElementById("ball-game").classList.add("hidden");
+            document.getElementById("song-select").classList.remove("hidden");
+        }
+    </script>
+</body>
+</html>
